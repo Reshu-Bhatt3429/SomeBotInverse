@@ -1,7 +1,7 @@
 """
 ╔══════════════════════════════════════════════════════════════════════╗
 ║          POLYMARKET TICK BOT — CONFIGURATION                      ║
-║  Opposite-of-first-tick strategy on BTC + ETH 5-min markets       ║
+║  Opposite-of-first-tick strategy on BTC 5-min markets             ║
 ╚══════════════════════════════════════════════════════════════════════╝
 """
 
@@ -31,9 +31,9 @@ LIVE_TRADING = os.environ.get("LIVE_TRADING", "false").lower() in ("true", "1", 
 # ═══════════════════════════════════════════════════════════════
 
 WINDOW_SEC = 300            # 5-minute markets
-ASSETS = ["btc", "eth"]     # Trade both simultaneously
+ASSETS = ["btc"]            # BTC only
 
-# Slug patterns: btc-updown-5m-{ts}, eth-updown-5m-{ts}
+# Slug pattern: btc-updown-5m-{ts}
 SLUG_PATTERN = "{asset}-updown-5m-{ts}"
 
 # ═══════════════════════════════════════════════════════════════
@@ -47,29 +47,21 @@ BINANCE_WS_ETH = "wss://stream.binance.com:9443/ws/ethusdt@aggTrade"
 #  TICK STRATEGY PARAMETERS
 # ═══════════════════════════════════════════════════════════════
 
-BET_SIZE_USDC       = 5.00   # Default bet size
-DIRECTION_THRESHOLD = 0.005  # Move percentage to trigger "first move" (0.005%)
+BET_SIZE_USDC       = 5.00   # Bet size per trade
+DIRECTION_THRESHOLD = 0.001  # Ultra-low: react to any micro-move (0.001%)
 FAST_LIMIT_PRICE    = 0.55   # Limit price for fast execution
 ENTRY_DEADLINE_SEC  = 60     # Don't enter in the last minute
 
 # Position limits per market
-MAX_TOTAL_USDC      = 10.00  # Max total spend per asset
-MAX_ONE_SIDE_USDC   = 10.00  # Never put more than $10 on one direction
+MAX_TOTAL_USDC      = 10.00  # Max total spend per market
+MAX_ONE_SIDE_USDC   = 10.00  # Max on one direction
 
 # ═══════════════════════════════════════════════════════════════
 #  EARLY EXIT (Safety)
 # ═══════════════════════════════════════════════════════════════
 
-PROFIT_EXIT_PCT       = 0.90   # High threshold — user said "hold all the way"
+PROFIT_EXIT_PCT       = 0.90   # High threshold — hold all the way
 NEAR_MAX_EXIT_BID     = 0.98   # Capture 98% if it gets there
-
-# ═══════════════════════════════════════════════════════════════
-#  RISK CONTROLS
-# ═══════════════════════════════════════════════════════════════
-
-MAX_DAILY_LOSS_USDC     = 50.0   # Stop for the day if we lose $50
-MAX_CONSECUTIVE_LOSSES  = 5      # Stop if we lose 5 in a row
-LOSS_COOLDOWN_SEC       = 3600   # 1 hour cooldown
 
 # ═══════════════════════════════════════════════════════════════
 #  EXECUTION
@@ -79,7 +71,7 @@ MIN_BET_USDC        = 0.50
 TICK_SIZE           = "0.01"
 ORDER_TIMEOUT_SEC   = 20
 FILL_TIMEOUT_SEC    = 30
-API_RATE_LIMIT      = 10
+API_RATE_LIMIT      = 30     # Aggressive — minimize inter-request delay
 BALANCE_REFRESH_SEC = 300
 DEFAULT_BANKROLL_USDC = 100.0
 
@@ -87,7 +79,7 @@ DEFAULT_BANKROLL_USDC = 100.0
 #  LOOP TIMING
 # ═══════════════════════════════════════════════════════════════
 
-MAIN_LOOP_INTERVAL  = 0.05  # 50ms
+MAIN_LOOP_INTERVAL  = 0.01  # 10ms — maximum responsiveness
 DISPLAY_INTERVAL    = 30.0
 
 # ═══════════════════════════════════════════════════════════════

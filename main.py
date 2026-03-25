@@ -1,7 +1,7 @@
 """
 ╔══════════════════════════════════════════════════════════════════════╗
 ║       POLYMARKET TICK BOT — MAIN LOOP                             ║
-║  Opposite-of-first-tick strategy on BTC + ETH 5-min markets       ║
+║  Opposite-of-first-tick strategy on BTC 5-min markets             ║
 ╚══════════════════════════════════════════════════════════════════════╝
 """
 
@@ -16,7 +16,6 @@ from datetime import datetime
 from config import (
     LIVE_TRADING, MAIN_LOOP_INTERVAL, DISPLAY_INTERVAL,
     ASSETS, WINDOW_SEC, ENTRY_DEADLINE_SEC,
-    MAX_DAILY_LOSS_USDC, MAX_CONSECUTIVE_LOSSES, LOSS_COOLDOWN_SEC,
     BALANCE_REFRESH_SEC,
     LOG_DIR,
 )
@@ -55,8 +54,6 @@ class TickBot:
         self.session_pnl       = 0.0
         self.total_markets     = 0
         self.profitable_markets = 0
-        self.consecutive_losses = 0
-        self._cooldown_until   = 0.0
 
         # Display
         self._last_display  = 0.0
@@ -113,12 +110,9 @@ class TickBot:
         if now - self._last_balance >= BALANCE_REFRESH_SEC:
             self._refresh_balance()
 
-        if now < self._cooldown_until:
-            self._maybe_display()
-            return
-
-        if self.daily_pnl <= -MAX_DAILY_LOSS_USDC:
-            logger.warning(f"🛑 Daily loss limit hit — stopped")
+        # Hard stop: $25 session loss limit
+        if self.session_pnl <= -25.0:
+            logger.warning(f"🛑 Session loss limit hit (${self.session_pnl:+.2f}) — stopping bot")
             self._running = False
             return
 
@@ -153,10 +147,12 @@ class TickBot:
 
             market = self.scanner.get_market(asset, window_ts)
             if market is None:
+                logger.info(f"  [{asset.upper()}] No market found for this window")
                 continue
 
             remaining = self.scanner.seconds_remaining(market)
             if remaining is not None and remaining < ENTRY_DEADLINE_SEC:
+                logger.info(f"  [{asset.upper()}] Market too close to expiry ({remaining:.0f}s) — skipping")
                 continue
 
             feed = self.feed.get(asset)
@@ -171,11 +167,16 @@ class TickBot:
         outcome = "UP" if move > 0 else "DOWN" if move < 0 else "FLAT"
 
         result = self.engine.resolve(asset, outcome)
-        if result is None: return
+        if result is None:
+            return
 
         pos = self.engine.positions.get(asset)
         window_ts = pos.market.get("window_ts", 0) if pos else 0
-        self.data.record_window_resolve(asset, window_ts, result, feed.open_price, feed.price)
+        self.data.record_window_resolve(
+            asset, window_ts, result,
+            binance_open=feed.open_price,
+            binance_close=feed.price,
+        )
 
         pnl = result["net_pnl"]
         self.daily_pnl   += pnl
@@ -184,24 +185,22 @@ class TickBot:
 
         if pnl > 0:
             self.profitable_markets += 1
-            self.consecutive_losses = 0
-        else:
-            self.consecutive_losses += 1
-            if self.consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
-                self._cooldown_until = time.time() + LOSS_COOLDOWN_SEC
-                logger.warning(f"⚠️  {self.consecutive_losses} losses — cooling down")
 
         self._log_csv(result)
 
     def _maybe_display(self):
         now = time.time()
-        if now - self._last_display < DISPLAY_INTERVAL: return
+        if now - self._last_display < DISPLAY_INTERVAL:
+            return
         self._last_display = now
 
         mkt_wr = (self.profitable_markets / self.total_markets * 100 if self.total_markets > 0 else 0)
         lines = [
             f"\n{'─'*60}",
-            f"  BTC ${self.feed.btc.price:>10,.2f} | ETH ${self.feed.eth.price:>10,.2f}",
+            f"  BTC ${self.feed.btc.price:>10,.2f}  "
+            f"move {self.feed.btc.move_pct():+.3f}%  "
+            f"{self.feed.btc.direction()}",
+            f"  Bankroll: ${self.engine.bankroll:.2f}",
             f"  PnL: Daily ${self.daily_pnl:+.2f} | Session ${self.session_pnl:+.2f}",
             f"  Win Rate: {mkt_wr:.0f}% ({self.profitable_markets}W/{self.total_markets} total)",
         ]
@@ -214,30 +213,57 @@ class TickBot:
         balance = self.executor.get_balance()
         if balance > 0:
             self.engine.bankroll = balance
+            logger.info(f"💵 Bankroll: ${balance:.2f} USDC")
         self._last_balance = time.time()
 
     def _shutdown(self):
+        logger.info("\n🛑 Shutting down...")
         self.data.stop()
         self.feed.stop()
+        mkt_wr = (self.profitable_markets / self.total_markets * 100
+                  if self.total_markets > 0 else 0)
+        logger.info(
+            f"\n{'═'*60}\n"
+            f"  Session complete\n"
+            f"  Markets: {self.profitable_markets}W / "
+            f"{self.total_markets - self.profitable_markets}L "
+            f"({mkt_wr:.0f}%)\n"
+            f"  Session PnL: ${self.session_pnl:+.2f}\n"
+            f"{'═'*60}\n"
+        )
 
     def _handle_stop(self, *_):
+        logger.info("\n🛑 Stop signal received")
         self._running = False
 
     def _init_csv(self):
         if not os.path.exists(self._csv_path):
             with open(self._csv_path, "w", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerow(["timestamp", "asset", "direction", "lean", "total_cost", "payout", "net_pnl"])
+                writer.writerow([
+                    "timestamp", "asset", "direction", "lean",
+                    "total_cost", "payout", "net_pnl", "correct_lean",
+                    "daily_pnl", "session_pnl",
+                ])
 
     def _log_csv(self, result: dict):
         try:
             with open(self._csv_path, "a", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow([
-                    datetime.utcnow().isoformat(), result["asset"], result["direction"],
-                    result["lean"], f"{result['total_cost']:.4f}", f"{result['payout']:.4f}", f"{result['net_pnl']:.4f}"
+                    datetime.utcnow().isoformat(),
+                    result["asset"],
+                    result["direction"],
+                    result["lean"],
+                    f"{result['total_cost']:.4f}",
+                    f"{result['payout']:.4f}",
+                    f"{result['net_pnl']:.4f}",
+                    result["correct_lean"],
+                    f"{self.daily_pnl:.4f}",
+                    f"{self.session_pnl:.4f}",
                 ])
-        except: pass
+        except Exception as e:
+            logger.warning(f"CSV log failed: {e}")
 
 
 if __name__ == "__main__":

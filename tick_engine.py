@@ -110,6 +110,7 @@ class TickEngine:
         self.data = data_collector
         self.positions: dict[str, MarketPosition] = {}
         self.bankroll: float = DEFAULT_BANKROLL_USDC
+        self._last_exit_check: float = 0.0  # throttle orderbook checks
 
     def has_position(self, asset: str) -> bool:
         p = self.positions.get(asset)
@@ -130,15 +131,16 @@ class TickEngine:
         market = pos.market
         neg_risk = market.get("neg_risk", False)
 
-        # ── Phase: WAIT → TICK ────────────────────────────────
+        # ── Phase: WAIT → TICK (instant transition) ─────────
         if pos.phase == "WAIT":
             if remaining is None or remaining > 300:
                 return  
             pos.phase = "TICK"
-            logger.info(f"  ⚡ [{asset.upper()}] WATCHING — waiting for first move")
+            logger.info(f"  ⚡ [{asset.upper()}] ARMED — watching for first tick")
+            # Fall through immediately to TICK — don't waste a cycle
 
         # ── Phase: TICK → HOLD (FAST BET) ──────────────────────
-        elif pos.phase == "TICK":
+        if pos.phase == "TICK":
             if remaining is None or remaining < ENTRY_DEADLINE_SEC:
                 pos.phase = "HOLD"
                 return
@@ -159,14 +161,7 @@ class TickEngine:
                 pos.phase = "HOLD"
                 return
 
-            # Record direction detected
-            window_ts = market.get("window_ts", 0)
-            if self.data:
-                self.data.record_direction_detected(
-                    asset, window_ts, tick_dir, move_pct,
-                    feed.price, pos.elapsed,
-                )
-
+            # CRITICAL PATH: compute budget → submit order ASAP
             ask = FAST_LIMIT_PRICE
             budget = min(
                 BET_SIZE_USDC,
@@ -179,8 +174,8 @@ class TickEngine:
                 return
 
             logger.info(
-                f"  🔥 [{asset.upper()}] First tick was {tick_dir} ({move_pct:+.4f}%). "
-                f"Betting OPPOSITE: {bet_dir} ${budget:.2f} @ ${ask:.2f}"
+                f"  🔥 [{asset.upper()}] First tick {tick_dir} ({move_pct:+.4f}%) → "
+                f"OPPOSITE {bet_dir} ${budget:.2f} @ ${ask:.2f}"
             )
 
             order_id = self.executor.buy(
@@ -193,7 +188,13 @@ class TickEngine:
             if order_id:
                 side_obj.add_fill(budget, ask)
                 pos.phase = "HOLD"
+                # Data recording AFTER order (non-blocking)
+                window_ts = market.get("window_ts", 0)
                 if self.data:
+                    self.data.record_direction_detected(
+                        asset, window_ts, tick_dir, move_pct,
+                        feed.price, pos.elapsed,
+                    )
                     self.data.record_order(
                         asset, window_ts, "BUY", bet_dir,
                         budget, ask, order_id, pos.elapsed, "MAIN",
@@ -201,9 +202,13 @@ class TickEngine:
             else:
                 logger.error(f"  ❌ [{asset.upper()}] Order failed for {bet_dir}")
 
-        # ── Phase: HOLD ───────────────────────────────────────
+        # ── Phase: HOLD (throttled exit checks) ────────────────
         elif pos.phase == "HOLD":
-            # Optional: check for near-max profit exit
+            # Only check for exits every 10s — don't hammer the API
+            now = time.time()
+            if now - self._last_exit_check < 10.0:
+                return
+            self._last_exit_check = now
             self._check_near_max_exit(pos, neg_risk)
             self._check_profit_exit(pos, neg_risk)
 
@@ -231,8 +236,6 @@ class TickEngine:
             "asset":      asset,
             "direction":  asset_direction,
             "lean":       pos.lean,
-            "up_spent":   up_s,
-            "down_spent": down_s,
             "total_cost": total_cost,
             "payout":     payout,
             "net_pnl":    net_pnl,

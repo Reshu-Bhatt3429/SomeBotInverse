@@ -131,22 +131,23 @@ class Executor:
             return order_id
 
         try:
-            from py_clob_client.clob_types import MarketOrderArgs, PartialCreateOrderOptions
+            from py_clob_client.clob_types import (
+                MarketOrderArgs, PartialCreateOrderOptions, OrderType,
+            )
 
-            with self._lock:
-                self._rate_limit()
-                args = MarketOrderArgs(
-                    token_id=token_id,
-                    amount=size_usdc,
-                    side=side,
-                )
-                opts = PartialCreateOrderOptions(
-                    tick_size=TICK_SIZE,
-                    neg_risk=neg_risk,
-                )
-                from py_clob_client.clob_types import OrderType
-                signed = self._client.create_market_order(args, options=opts)
-                resp = self._client.post_order(signed, orderType=OrderType.FOK)
+            # Minimal locking — sign + post as fast as possible
+            self._rate_limit()
+            args = MarketOrderArgs(
+                token_id=token_id,
+                amount=size_usdc,
+                side=side,
+            )
+            opts = PartialCreateOrderOptions(
+                tick_size=TICK_SIZE,
+                neg_risk=neg_risk,
+            )
+            signed = self._client.create_market_order(args, options=opts)
+            resp = self._client.post_order(signed, orderType=OrderType.FOK)
 
             if isinstance(resp, dict):
                 order_id = resp.get("orderID") or resp.get("id", "")

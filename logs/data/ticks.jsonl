@@ -1,0 +1,4 @@
+{"ts": 1774455325.4163668, "asset": "btc", "window_ts": 1774455300, "window_elapsed": 25.42, "price": 70864.0, "open_price": 0.0, "move_pct": 0.0, "direction": "FLAT"}
+{"ts": 1774455325.4163668, "asset": "eth", "window_ts": 1774455300, "window_elapsed": 25.42, "price": 2160.25, "open_price": 0.0, "move_pct": 0.0, "direction": "FLAT"}
+{"ts": 1774455335.4184072, "asset": "btc", "window_ts": 1774455300, "window_elapsed": 35.42, "price": 70849.38, "open_price": 0.0, "move_pct": 0.0, "direction": "FLAT"}
+{"ts": 1774455335.4184072, "asset": "eth", "window_ts": 1774455300, "window_elapsed": 35.42, "price": 2159.54, "open_price": 0.0, "move_pct": 0.0, "direction": "FLAT"}

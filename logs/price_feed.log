@@ -1,0 +1,4 @@
+2026-03-25 21:45:23,415 | INFO | 📡 Price feeds starting (BTC + ETH)...
+2026-03-25 21:45:25,029 | INFO | 📡 BTC WS connected
+2026-03-25 21:45:25,030 | INFO | 📡 ETH WS connected
+2026-03-25 21:45:25,415 | INFO | ✅ Feeds ready: BTC=$70,864.00  ETH=$2,160.25
